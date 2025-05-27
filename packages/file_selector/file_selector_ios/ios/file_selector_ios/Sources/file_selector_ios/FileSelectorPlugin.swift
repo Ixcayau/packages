@@ -52,27 +52,45 @@ public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
     let instance = FileSelectorPlugin()
     FileSelectorApiSetup.setUp(binaryMessenger: registrar.messenger(), api: instance)
   }
-
+    
   func openFile(config: FileSelectorConfig, completion: @escaping (Result<[String], Error>) -> Void)
   {
     let completionBridge = PickerCompletionBridge(completion: completion, owner: self)
-    let documentPicker =
-      documentPickerViewControllerOverride
-      ?? UIDocumentPickerViewController(
-        documentTypes: config.utis,
-        in: .import)
+    let documentPicker = documentPickerViewControllerOverride ?? UIDocumentPickerViewController(
+      documentTypes: config.utis,
+      in: .import
+    )
     documentPicker.allowsMultipleSelection = config.allowMultiSelection
     documentPicker.delegate = completionBridge
-
-    let presenter =
-      self.viewPresenterOverride ?? UIApplication.shared.delegate?.window??.rootViewController
-    if let presenter = presenter {
-      pendingCompletions.insert(completionBridge)
-      presenter.present(documentPicker, animated: true, completion: nil)
-    } else {
-      completion(
-        .failure(PigeonError(code: "error", message: "Missing root view controller.", details: nil))
-      )
+    documentPicker.modalPresentationStyle = .formSheet
+    
+    // Improved view controller hierarchy handling
+    DispatchQueue.main.async {
+      guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+          let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+          var topController = window.rootViewController else {
+        completion(.failure(PigeonError(code: "error", message: "Unable to access window hierarchy", details: nil)))
+        return
+      }
+      
+      // Find the topmost presented view controller
+      while let presentedController = topController.presentedViewController {
+        topController = presentedController
+      }
+      
+      // Special handling for Flutter view controllers
+      if let flutterViewController = topController as? FlutterViewController {
+        // Ensure presentation happens after Flutter view is fully loaded
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+          flutterViewController.present(documentPicker, animated: true) {
+            self.pendingCompletions.insert(completionBridge)
+          }
+        }
+      } else {
+        topController.present(documentPicker, animated: true) {
+          self.pendingCompletions.insert(completionBridge)
+        }
+      }
     }
   }
 
